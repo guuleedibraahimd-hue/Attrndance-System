@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="so">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nidaamka Attendance - Classed (12 x 90)</title>
+  <style>
+    :root{--accent:#0b74de;--muted:#666}
+    body{font-family:Inter,Segoe UI,Arial;margin:0;background:#f5f7fb;color:#111}
+    .container{max-width:980px;margin:28px auto;padding:18px;background:#fff;border-radius:10px;box-shadow:0 6px 20px rgba(18,20,30,0.06)}
+    h1{margin:0 0 8px;font-size:22px}
+    .muted{color:var(--muted);font-size:13px}
+    .top-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+    input[type="text"], input[type="date"], input[type="number"], select {padding:8px 10px;border:1px solid #d6dbe6;border-radius:8px;font-size:14px}
+    button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+    .left{flex:1}
+    .card{padding:12px;border-radius:8px;background:#fbfdff;border:1px solid #eef4ff}
+    form.row{display:flex;gap:8px;align-items:center}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px 6px;border-bottom:1px solid #eef0f4;font-size:14px;text-align:left}
+    .id{width:90px}
+    .actions{width:200px}
+    .status-pill{display:inline-block;padding:4px 9px;border-radius:999px;font-weight:600;font-size:13px}
+    .present{background:#e6fbec;color:#0a8a3e}
+    .absent{background:#fff2f2;color:#e03a3a;border:1px solid #ffd8d8}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+    .small{font-size:13px;padding:6px 8px;border-radius:6px}
+    .danger{background:#ff4d4f}
+    .note{font-size:13px;color:#444;margin-top:8px}
+    .login-screen{max-width:420px;margin:60px auto;padding:20px;border-radius:10px;background:#fff;box-shadow:0 10px 40px rgba(2,8,23,0.08)}
+    .center{text-align:center}
+    label{font-size:13px;color:#333}
+    .input-row{display:flex;gap:8px;margin-top:8px}
+    .flex-row{display:flex;gap:8px}
+    .small-muted{font-size:12px;color:#777}
+    .right{margin-left:auto}
+    @media(max-width:700px){.top-row{flex-direction:column;align-items:stretch}}
+  </style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+/* ---------- Attendance App with 12 Classes (max 90 students each) ---------- */
+
+const STORE_PREFIX = 'attend_app_v2_';
+const storage = {
+  get(key, fallback=null){
+    const v = localStorage.getItem(STORE_PREFIX + key);
+    return v ? JSON.parse(v) : fallback;
+  },
+  set(key, value){
+    localStorage.setItem(STORE_PREFIX + key, JSON.stringify(value));
+  },
+  remove(key){ localStorage.removeItem(STORE_PREFIX + key); }
+};
+
+/* ---------- App state ---------- */
+let session = storage.get('session', null); // {schoolName, teacherNumber, teacherName}
+let classes = storage.get('classes', null); // { "Class 1": [{id,name}, ...], ... }
+let attendanceRecords = storage.get('records', {}); // { "2025-10-20|Math|Class 1": [...] , ... }
+let currentClass = 'Class 1';
+
+/* ensure classes object exists with 12 classes */
+function ensureClasses(){
+  if(!classes || typeof classes !== 'object'){
+    classes = {};
+  }
+  for(let i=1;i<=12;i++){
+    const key = `Class ${i}`;
+    if(!Array.isArray(classes[key])) classes[key] = [];
+  }
+  storage.set('classes', classes);
+}
+
+/* Helpers */
+function el(tag, attrs={}, ...children){
+  const e = document.createElement(tag);
+  for(const k in attrs){
+    if(k.startsWith('on') && typeof attrs[k] === 'function'){ e.addEventListener(k.slice(2), attrs[k]); }
+    else if(k === 'html'){ e.innerHTML = attrs[k]; }
+    else e.setAttribute(k, attrs[k]);
+  }
+  children.forEach(c => { if(c==null) return; e.append(typeof c === 'string'? document.createTextNode(c) : c); });
+  return e;
+}
+function saveAll(){
+  storage.set('classes', classes);
+  storage.set('records', attendanceRecords);
+}
+
+/* Login */
+function renderLogin(){
+  const root = document.getElementById('app');
+  root.innerHTML = '';
+  const box = el('div',{class:'login-screen'},
+    el('div',{class:'center'}, el('h1',{}, 'Nidaamka Attendance'), el('div',{class:'muted'}, 'Fadlan gasho si aad u bilowdo')),
+    el('div',{style:'margin-top:12px'},
+      el('label',{}, 'Magaca School'),
+      el('input',{type:'text', id:'schoolName', placeholder:'Magaca School', style:'width:100%;margin-top:6px'})
+    ),
+    el('div',{class:'input-row'},
+      el('div',{style:'flex:1'},
+         el('label',{}, 'Lambarka Macalinka'),
+         el('input',{type:'text', id:'teacherNumber', placeholder:'Tusaale: 1001', style:'width:100%;margin-top:6px'})
+      ),
+      el('div',{style:'flex:2'},
+         el('label',{}, 'Magaca Macalinka'),
+         el('input',{type:'text', id:'teacherName', placeholder:'Magaca Macalinka', style:'width:100%;margin-top:6px'})
+      )
+    ),
+    el('div',{style:'margin-top:12px', class:'center'},
+       el('button',{onclick: onLogin}, 'Gasho / Start')
+    ),
+    el('div',{class:'note'}, 'Xogta waxaa lagu kaydinayaa browser-ka (localStorage).')
+  );
+  root.appendChild(box);
+
+  if(session){
+    document.getElementById('schoolName').value = session.schoolName || '';
+    document.getElementById('teacherNumber').value = session.teacherNumber || '';
+    document.getElementById('teacherName').value = session.teacherName || '';
+  }
+}
+
+function onLogin(){
+  const schoolName = document.getElementById('schoolName').value.trim();
+  const teacherNumber = document.getElementById('teacherNumber').value.trim();
+  const teacherName = document.getElementById('teacherName').value.trim();
+  if(!schoolName || !teacherNumber || !teacherName){
+    alert('Fadlan buuxi dhammaan goobaha login.');
+    return;
+  }
+  session = {schoolName, teacherNumber, teacherName};
+  storage.set('session', session);
+  ensureClasses();
+  renderMain();
+}
+
+/* Main */
+function renderMain(){
+  ensureClasses();
+  const root = document.getElementById('app');
+  root.innerHTML = '';
+  const header = el('div',{class:'top-row'},
+    el('div',{class:'left'},
+       el('h1',{}, `Attendance — ${session.schoolName}`),
+       el('div',{class:'muted'}, `Macalin: ${session.teacherName} • ID: ${session.teacherNumber}`)
+    ),
+    el('div',{},
+       el('button',{class:'ghost small', onclick: onLogout}, 'Ka bax (Logout)')
+    )
+  );
+
+  // controls: date, subject, class select
+  const classOptions = [];
+  for(let i=1;i<=12;i++) classOptions.push(el('option',{value:`Class ${i}`}, `Class ${i}`));
+  const controls = el('div',{class:'card'},
+    el('div',{class:'flex-row'},
+      el('div',{}, el('label',{}, 'Taariikh'), el('input',{type:'date', id:'att_date', value: new Date().toISOString().slice(0,10)})),
+      el('div',{}, el('label',{}, 'Mawduuc (Subject)'), el('input',{type:'text', id:'att_subject', placeholder:'Tusaale: Xisaab'})),
+      el('div',{}, el('label',{}, 'Fasalka (Class)'), 
+         el('select',{id:'class_select', onchange: onClassChange}, ...classOptions)
+      ),
+      el('div',{}, el('label',{}, 'Section (optional)'), el('input',{type:'text', id:'att_section', placeholder:'Tusaale: 3A'}))
+    ),
+    el('div',{style:'margin-top:8px', class:'small-muted'}, 'Dooro class si aad u maareyso ardayda fasalkaas (xadka 90 arday).')
+  );
+
+  // add student form (affects current class only)
+  const addForm = el('div',{class:'card', style:'margin-top:12px'},
+    el('h3',{}, 'Ku dar Arday (kaliya fasalka hadda dooran)'),
+    el('form',{class:'row', onsubmit:e=>{e.preventDefault(); addStudentToClass();}},
+      el('input',{type:'text', id:'new_id', placeholder:'Lambarka Ardayga (ID)', required:true}),
+      el('input',{type:'text', id:'new_name', placeholder:'Magaca Ardayga', required:true}),
+      el('button',{type:'submit'}, 'Ku dar')
+    ),
+    el('div',{class:'note'}, 'ID waa primary key ee fasalka. Fasalka walba wuxuu qaadi karaa ilaa 90 arday.')
+  );
+
+  // student table area
+  const tableArea = el('div',{style:'margin-top:12px'},
+    el('div',{class:'toolbar'},
+      el('button',{onclick: saveSnapshot}, 'Save Attendance'),
+      el('button',{onclick: exportCSV}, 'Export CSV'),
+      el('button',{onclick: clearClass, class:'danger small'}, 'Tirtir Dhammaan Students Fasalka'),
+      el('div',{style:'flex:1'}), // spacer
+      el('button',{onclick: showSavedRecords, class:'small'}, 'Tus Record-yadii Hore')
+    ),
+    el('div', {id:'student_table_container'})
+  );
+
+  root.appendChild(el('div',{class:'container'}, header, controls, addForm, tableArea));
+  // set class select to currentClass
+  document.getElementById('class_select').value = currentClass;
+  renderStudentTable();
+}
+
+function onLogout(){
+  if(!confirm('Ma hubtaa inaad ka bixi rabto?')) return;
+  session = null;
+  storage.remove('session');
+  renderLogin();
+}
+
+/* Class + Student management */
+function onClassChange(e){
+  currentClass = e.target.value;
+  renderStudentTable();
+}
+
+function addStudentToClass(){
+  const id = document.getElementById('new_id').value.trim();
+  const name = document.getElementById('new_name').value.trim();
+  if(!id || !name){ alert('Fadlan buuxi ID iyo Magaca'); return; }
+  const list = classes[currentClass];
+  if(list.some(s => s.id === id)){
+    alert('ID hore ayaa jira fasalkan — ID waa inuu noqdaa mid gaar ah.');
+    return;
+  }
+  if(list.length >= 90){
+    alert('Fasalkani wuxuu gaadhay xadka 90 arday. Waxa aad tirtiri kartaa arday si aad u darto mid cusub.');
+    return;
+  }
+  list.push({id, name});
+  classes[currentClass] = list;
+  saveAll();
+  document.getElementById('new_id').value = '';
+  document.getElementById('new_name').value = '';
+  renderStudentTable();
+}
+
+function deleteStudentFromClass(id){
+  if(!confirm('Ma hubtaa inaad tirtiri rabto ardaygan?')) return;
+  classes[currentClass] = classes[currentClass].filter(s => s.id !== id);
+  saveAll();
+  renderStudentTable();
+}
+
+function clearClass(){
+  if(!confirm(`Tani waxay tirtiri doontaa dhammaan ardayda ku jirta ${currentClass}. Ma hubtaa?`)) return;
+  classes[currentClass] = [];
+  // also remove any attendance records for this class (optional)
+  for(const k of Object.keys(attendanceRecords)){
+    if(k.endsWith('|'+currentClass)) delete attendanceRecords[k];
+  }
+  saveAll();
+  renderStudentTable();
+}
+
+/* Table rendering and marking */
+function renderStudentTable(){
+  const container = document.getElementById('student_table_container');
+  container.innerHTML = '';
+  const students = classes[currentClass] || [];
+  if(students.length === 0){
+    container.appendChild(el('div',{class:'muted'}, `Ma jiraan arday ku jira ${currentClass}. Ku dar arday si aad u bilowdo.`));
+    return;
+  }
+
+  const date = document.getElementById('att_date').value || new Date().toISOString().slice(0,10);
+  const subject = (document.getElementById('att_subject')||{}).value || '—';
+  const key = `${date}|${subject}|${currentClass}`;
+
+  const existing = attendanceRecords[key] || students.map(s => ({id:s.id, name:s.name, status:'absent'}));
+  const mapExisting = {};
+  existing.forEach(r => mapExisting[r.id] = r);
+  const rows = students.map(s => mapExisting[s.id] ? {...mapExisting[s.id], name:s.name} : {id:s.id, name:s.name, status:'absent'});
+
+  const tbl = el('table',{},
+    el('thead',{},
+      el('tr',{},
+        el('th',{class:'id'}, 'ID'),
+        el('th',{}, 'Magaca Ardayga'),
+        el('th',{}, 'Xaalad'),
+        el('th',{}, 'Action')
+      )
+    ),
+    el('tbody',{},
+      ...rows.map(r => {
+        const statusPill = el('span',{class:`status-pill ${r.status === 'present' ? 'present' : 'absent'}`}, r.status === 'present' ? 'Joog' : 'Maqan');
+        const statusToggle = el('label',{},
+          el('input',{type:'checkbox', checked: r.status === 'present', onchange: (e)=>{ toggleStatus(r.id, e.target.checked); }}),
+          ' Mark'
+        );
+        return el('tr',{},
+          el('td',{class:'id'}, r.id),
+          el('td',{}, r.name),
+          el('td',{}, statusPill, ' ', statusToggle),
+          el('td',{class:'actions'},
+             el('button',{onclick:()=>deleteStudentFromClass(r.id), class:'small'}, 'Tirtir'),
+             ' ',
+             el('button',{onclick:()=>forcePresent(r.id), class:'small'}, 'Joog'),
+             ' ',
+             el('button',{onclick:()=>forceAbsent(r.id), class:'small'}, 'Maqan')
+          )
+        );
+      })
+    )
+  );
+
+  container.appendChild(el('div',{}, el('div',{class:'muted'}, `Taariikh: ${date} • Mawduuc: ${subject} • ${currentClass} (Arday: ${students.length})`)));
+  container.appendChild(tbl);
+}
+
+function toggleStatus(id, isPresent){
+  const date = document.getElementById('att_date').value || new Date().toISOString().slice(0,10);
+  const subject = (document.getElementById('att_subject')||{}).value || '—';
+  const key = `${date}|${subject}|${currentClass}`;
+  const students = classes[currentClass] || [];
+  const rec = attendanceRecords[key] || students.map(s => ({id:s.id, name:s.name, status:'absent'}));
+  const idx = rec.findIndex(r=>r.id===id);
+  if(idx>=0) rec[idx].status = isPresent ? 'present' : 'absent';
+  else rec.push({id, name: students.find(s=>s.id===id).name, status: isPresent ? 'present' : 'absent'});
+  attendanceRecords[key] = rec;
+  saveAll();
+  renderStudentTable();
+}
+function forcePresent(id){ toggleStatus(id, true); }
+function forceAbsent(id){ toggleStatus(id, false); }
+
+/* Save snapshot & export */
+function saveSnapshot(){
+  const date = document.getElementById('att_date').value || new Date().toISOString().slice(0,10);
+  const subject = (document.getElementById('att_subject')||{}).value;
+  if(!subject){ alert('Fadlan geli mawduuca (subject) ka hor inta aadan kaydin.'); return; }
+  const key = `${date}|${subject}|${currentClass}`;
+  const students = classes[currentClass] || [];
+  const current = students.map(s => {
+    const existing = (attendanceRecords[key] || []).find(r=>r.id===s.id);
+    return {id:s.id, name:s.name, status: existing ? existing.status : 'absent'};
+  });
+  attendanceRecords[key] = current;
+  saveAll();
+  alert('Attendance la kaydiyey.');
+}
+
+function exportCSV(){
+  const date = document.getElementById('att_date').value || new Date().toISOString().slice(0,10);
+  const subject = (document.getElementById('att_subject')||{}).value || 'subject';
+  const key = `${date}|${subject}|${currentClass}`;
+  const rec = attendanceRecords[key] || (classes[currentClass] || []).map(s=>({id:s.id,name:s.name,status:'absent'}));
+  const header = ['School','TeacherNumber','TeacherName','Date','Subject','Class','StudentID','StudentName','Status'];
+  const rows = rec.map(r => [session.schoolName, session.teacherNumber, session.teacherName, date, subject, currentClass, r.id, r.name, r.status]);
+  let csv = header.join(',') + '\n' + rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `attendance_${date}_${subject.replace(/\s+/g,'_')}_${currentClass.replace(/\s+/g,'_')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* Misc records */
+function showSavedRecords(){
+  const keys = Object.keys(attendanceRecords);
+  if(keys.length === 0){ alert('Ma jiraan record hore.'); return; }
+  const list = keys.map(k => {
+    const parts = k.split('|');
+    const date = parts[0] || '';
+    const subject = parts[1] || '';
+    const cls = parts[2] || '';
+    const countPresent = (attendanceRecords[k] || []).filter(r=>r.status==='present').length;
+    const total = (attendanceRecords[k] || []).length;
+    return `${date} • ${subject} • ${cls} — Joog: ${countPresent}/${total}`;
+  }).join('\n');
+  alert('Record-yada kaydsan:\n\n' + list);
+}
+
+/* Init */
+(function init(){
+  ensureClasses();
+  attendanceRecords = storage.get('records', {});
+  const root = document.getElementById('app');
+  if(!session) renderLogin();
+  else renderMain();
+  document.addEventListener('change', (e)=>{
+    if(e.target && (e.target.id === 'att_date' || e.target.id === 'att_subject')) renderStudentTable();
+  });
+})();
+</script>
+</body>
+</html>
